@@ -1,0 +1,12 @@
+SET client_min_messages = warning;
+begin;
+drop function drop_partition (text,text) cascade;
+drop function create_partition (text,text) cascade;
+drop function create_parent(text,text,text) cascade;
+drop function create_trigger_function(oid) cascade;
+drop function trigger_iter(oid,text,integer) cascade;
+drop function where_clause(oid) cascade;
+drop function range_type_info(text,text,text,boolean,boolean,text,boolean,boolean) cascade;
+drop table partition cascade;
+drop table master cascade;
+commit;

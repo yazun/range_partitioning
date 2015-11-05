@@ -1,0 +1,8 @@
+results/
+*.so
+tmp/
+*.o
+regression.diffs
+regression.out
+/sql/range_partitioning--*
+!/sql/range_partitioning--*--*.sql

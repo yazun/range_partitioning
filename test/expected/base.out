@@ -1,0 +1,291 @@
+begin;
+\set ECHO none
+create schema part_test;
+create view p_info
+as
+select  c.relname, p.partition_number, p.range
+from    partition p
+join    pg_class c
+on      c.oid = p.partition_class;
+create table part_test.foo( x integer );
+select create_parent('part_test.foo','x');
+ create_parent 
+---------------
+ 
+(1 row)
+
+select * from p_info order by 1,2;
+ relname | partition_number | range 
+---------+------------------+-------
+ foo_p0  |                0 | (,)
+(1 row)
+
+select  mt.relname as table_name,
+        pt.relname as partition_name,
+        cons.consrc
+from    pg_namespace vs
+join    pg_class mt               -- all regular tables found in this schema are master tables
+on      vs.oid = mt.relnamespace
+        and
+        mt.relkind = 'r'          -- r = regular table
+join    pg_inherits i             -- every object that inherits from a master table
+on      i.inhparent = mt.oid
+join    pg_class pt               -- of those objects, the regular tables are partitions
+on      pt.oid = i.inhrelid
+        and
+        pt.relkind = 'r'        -- r = regular table
+join    pg_constraint cons
+on      cons.conrelid = pt.oid
+        and
+        cons.contype = 'c'      -- c = check constraint
+        and
+        cons.consrc like '%<@%''%''::%'
+where   vs.nspname = 'part_test'
+and     mt.relname = 'foo'
+order by 1,2,3;
+ table_name | partition_name |         consrc          
+------------+----------------+-------------------------
+ foo        | foo_p0         | (x <@ '(,)'::int4range)
+(1 row)
+
+select create_partition('part_test.foo','[5000,)');
+ create_partition 
+------------------
+ 
+(1 row)
+
+select * from p_info order by 1,2;
+ relname | partition_number |  range  
+---------+------------------+---------
+ foo_p0  |                0 | (,5000)
+ foo_p1  |                1 | [5000,)
+(2 rows)
+
+select exists( select null from pg_class where relname = 'foo_p0');
+ exists 
+--------
+ t
+(1 row)
+
+select exists( select null from pg_class where relname = 'foo_p1');
+ exists 
+--------
+ t
+(1 row)
+
+insert into part_test.foo(x)
+values (10),(4999),(5000),(15000);
+select * from part_test.foo_p0 order by 1;
+  x   
+------
+   10
+ 4999
+(2 rows)
+
+select * from part_test.foo_p1 order by 1;
+   x   
+-------
+  5000
+ 15000
+(2 rows)
+
+select create_partition('part_test.foo','[10000,)');
+ create_partition 
+------------------
+ 
+(1 row)
+
+select * from p_info order by 1,2;
+ relname | partition_number |    range     
+---------+------------------+--------------
+ foo_p0  |                0 | (,5000)
+ foo_p1  |                1 | [5000,10000)
+ foo_p2  |                2 | [10000,)
+(3 rows)
+
+select * from part_test.foo_p0 order by 1;
+  x   
+------
+   10
+ 4999
+(2 rows)
+
+select * from part_test.foo_p1 order by 1;
+  x   
+------
+ 5000
+(1 row)
+
+select * from part_test.foo_p2 order by 1;
+   x   
+-------
+ 15000
+(1 row)
+
+select master_class::regclass::text as m, partition_class::regclass::text as p, range, where_clause(partition_class) as sql
+from partition
+order by 1,2;
+       m       |        p         |    range     |             sql             
+---------------+------------------+--------------+-----------------------------
+ part_test.foo | part_test.foo_p0 | (,5000)      | x < '5000'
+ part_test.foo | part_test.foo_p1 | [5000,10000) | x >= '5000' and x < '10000'
+ part_test.foo | part_test.foo_p2 | [10000,)     | x >= '10000'
+(3 rows)
+
+select drop_partition('part_test.foo_p1','part_test.foo_p0');
+ drop_partition 
+----------------
+ 
+(1 row)
+
+select * from p_info order by 1,2;
+ relname | partition_number |  range   
+---------+------------------+----------
+ foo_p0  |                0 | (,10000)
+ foo_p2  |                2 | [10000,)
+(2 rows)
+
+select * from part_test.foo_p0 order by 1;
+  x   
+------
+   10
+ 4999
+ 5000
+(3 rows)
+
+select * from part_test.foo_p2 order by 1;
+   x   
+-------
+ 15000
+(1 row)
+
+select drop_partition('part_test.foo_p0','part_test.foo_p2');
+ drop_partition 
+----------------
+ 
+(1 row)
+
+select * from p_info order by 1,2;
+ relname | partition_number | range 
+---------+------------------+-------
+ foo_p2  |                2 | (,)
+(1 row)
+
+select * from part_test.foo_p2 order by 1;
+   x   
+-------
+    10
+  4999
+  5000
+ 15000
+(4 rows)
+
+create type range_partitioning_textrange_c as range (subtype = text, collation = "C");
+create table part_test.bar(str text collate "C");
+select exists( select null from pg_attribute where attrelid = 'part_test.bar'::regclass and attname = 'str' );
+ exists 
+--------
+ t
+(1 row)
+
+select create_parent('part_test.bar','str');
+ create_parent 
+---------------
+ 
+(1 row)
+
+select * from p_info order by 1,2;
+ relname | partition_number | range 
+---------+------------------+-------
+ bar_p0  |                0 | (,)
+ foo_p2  |                2 | (,)
+(2 rows)
+
+select create_partition('part_test.bar','(,A)');
+ create_partition 
+------------------
+ 
+(1 row)
+
+select * from p_info order by 1,2;
+ relname | partition_number | range 
+---------+------------------+-------
+ bar_p0  |                0 | [A,)
+ bar_p1  |                1 | (,A)
+ foo_p2  |                2 | (,)
+(3 rows)
+
+select create_partition('part_test.bar','[A,C)');
+ create_partition 
+------------------
+ 
+(1 row)
+
+select * from p_info order by 1,2;
+ relname | partition_number | range 
+---------+------------------+-------
+ bar_p0  |                0 | [C,)
+ bar_p1  |                1 | (,A)
+ bar_p2  |                2 | [A,C)
+ foo_p2  |                2 | (,)
+(4 rows)
+
+insert into part_test.bar
+values ('ABEL'),('BAKER'),('CHARLIE');
+select * from part_test.bar_p0 order by 1;
+   str   
+---------
+ CHARLIE
+(1 row)
+
+select * from part_test.bar_p1 order by 1;
+ str 
+-----
+(0 rows)
+
+select * from part_test.bar_p2 order by 1;
+  str  
+-------
+ ABEL
+ BAKER
+(2 rows)
+
+select master_class::regclass::text as m, partition_class::regclass::text as p, range, where_clause(partition_class) as sql
+from partition
+order by 1,2;
+       m       |        p         | range |           sql            
+---------------+------------------+-------+--------------------------
+ part_test.bar | part_test.bar_p0 | [C,)  | str >= 'C'
+ part_test.bar | part_test.bar_p1 | (,A)  | str < 'A'
+ part_test.bar | part_test.bar_p2 | [A,C) | str >= 'A' and str < 'C'
+ part_test.foo | part_test.foo_p2 | (,)   | 
+(4 rows)
+
+select drop_partition('part_test.bar_p1','part_test.bar_p2');
+ drop_partition 
+----------------
+ 
+(1 row)
+
+select * from p_info order by 1,2;
+ relname | partition_number | range 
+---------+------------------+-------
+ bar_p0  |                0 | [C,)
+ bar_p2  |                2 | (,C)
+ foo_p2  |                2 | (,)
+(3 rows)
+
+select * from part_test.bar_p0 order by 1;
+   str   
+---------
+ CHARLIE
+(1 row)
+
+select * from part_test.bar_p2 order by 1;
+  str  
+-------
+ ABEL
+ BAKER
+(2 rows)
+
+rollback;

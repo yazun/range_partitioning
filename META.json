@@ -1,0 +1,42 @@
+{
+    "name": "range_partitioning",
+    "abstract": "Partition a table by static ranges",
+    "description": "Convert ordinary tables into partitioned tables based on an arbitrary column. Add partitions by splitting an existing partition into two adjacent sub-ranges. Combine two adjacent partitions into a single partition.",
+    "version": "0.0.1",
+    "maintainer": [ "Corey Huinker <corey.huinker@moat.com>" ],
+    "license": "postgresql",
+    "provides": {
+        "range_partitioning": {
+            "abstract": "Partition a table by static ranges",
+            "file": "sql/range_partitioning.sql",
+            "docfile": "doc/range_partitioning.md",
+            "version": "0.0.1"
+        }
+    },
+    "release_status": "unstable",
+    "prereqs": {
+        "runtime": {
+            "requires": {
+                "PostgreSQL": "9.2.0"
+            }
+        }
+    },
+
+    "generated_by": "Corey Huinker",
+
+    "resources": {
+        "bugtracker": {
+            "web": "https://github.com/moat/range_partitioning/issues"
+        },
+        "repository": {
+            "url": "git://github.com/moat/range_partitioning.git" ,
+            "web": "https://github.com/moat/range_partitioning",
+            "type": "git"
+        }
+    },    
+
+    "meta-spec": {
+        "version": "1.0.0",
+        "url": "http://pgxn.org/meta/spec.txt"
+    }
+}
