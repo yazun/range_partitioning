@@ -9,7 +9,7 @@ For function documentation and examples, see the [range_partitioning.md file](do
 
 ## INSTALLATION
 
-Requirements: PostgreSQL 9.4 or greater.
+Requirements: PostgreSQL 9.2 or greater.
 
 In the directory where you downloaded range_partitioning, run
 
