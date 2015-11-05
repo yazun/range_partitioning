@@ -28,7 +28,8 @@ or
 CREATE EXTENSION range_partitioning SCHEMA my_schema;
 ```
 
-All functions created have execute granted to public.
+A role named ```range_partitioning``` is created. Grant that role to any user who needs to create or remove partitions.
+
 
 ## UPGRADE
 
