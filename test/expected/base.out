@@ -1,6 +1,16 @@
 begin;
 \set ECHO none
 create schema part_test;
+select  where_clause('x','(,)','int4range') as w1,
+        where_clause('d','(,2015-01-01)','daterange') as w2,
+        where_clause('y','[4,5]','int4range') as w3,
+        where_clause('z','[4,5)','int4range') as w4,
+        where_clause('z','empty','int4range') as w5;
+  w1  |        w2        |          w3          |          w4          |  w5   
+------+------------------+----------------------+----------------------+-------
+ true | d < '01-01-2015' | y >= '4' and y < '6' | z >= '4' and z < '5' | false
+(1 row)
+
 create view p_info
 as
 select  c.relname, p.partition_number, p.range
@@ -24,28 +34,26 @@ select  mt.relname as table_name,
         pt.relname as partition_name,
         cons.consrc
 from    pg_namespace vs
-join    pg_class mt               -- all regular tables found in this schema are master tables
+join    pg_class mt
 on      vs.oid = mt.relnamespace
         and
-        mt.relkind = 'r'          -- r = regular table
-join    pg_inherits i             -- every object that inherits from a master table
+        mt.relkind = 'r'
+join    pg_inherits i
 on      i.inhparent = mt.oid
-join    pg_class pt               -- of those objects, the regular tables are partitions
+join    pg_class pt
 on      pt.oid = i.inhrelid
         and
-        pt.relkind = 'r'        -- r = regular table
+        pt.relkind = 'r'
 join    pg_constraint cons
 on      cons.conrelid = pt.oid
         and
-        cons.contype = 'c'      -- c = check constraint
-        and
-        cons.consrc like '%<@%''%''::%'
+        cons.contype = 'c'
 where   vs.nspname = 'part_test'
 and     mt.relname = 'foo'
 order by 1,2,3;
- table_name | partition_name |         consrc          
-------------+----------------+-------------------------
- foo        | foo_p0         | (x <@ '(,)'::int4range)
+ table_name | partition_name | consrc 
+------------+----------------+--------
+ foo        | foo_p0         | true
 (1 row)
 
 select create_partition('part_test.foo','[5000,)');
@@ -258,7 +266,7 @@ order by 1,2;
  part_test.bar | part_test.bar_p0 | [C,)  | str >= 'C'
  part_test.bar | part_test.bar_p1 | (,A)  | str < 'A'
  part_test.bar | part_test.bar_p2 | [A,C) | str >= 'A' and str < 'C'
- part_test.foo | part_test.foo_p2 | (,)   | 
+ part_test.foo | part_test.foo_p2 | (,)   | true
 (4 rows)
 
 select drop_partition('part_test.bar_p1','part_test.bar_p2');

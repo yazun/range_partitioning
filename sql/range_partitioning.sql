@@ -94,12 +94,17 @@ begin
     end if;
 
     if l_update_constraint then
-        execute format('alter table %s add constraint %I check (%I <@ %L::%s)',
+        execute format('alter table %s add constraint %I check (%s)',
                         new.partition_class::regclass::text,
                         l_constraint_name,
+                        (   select  where_clause(m.partition_attribute,new.range,m.range_type::regtype::text)
+                            from    master m
+                            where   m.master_class = new.master_class ));
+                        /*
                         ( select partition_attribute from master where master_class = new.master_class ),
                         new.range,
                         ( select range_type::regtype::text from master where master_class = new.master_class ));
+                        */
     end if;
 
     return new;
@@ -114,16 +119,16 @@ create trigger partition_reflect after insert or update on partition for each ro
 comment on trigger partition_reflect on partition
 is E'Any changes made to the partition table should be reflected in the actual partition metadata';
 
-create function range_type_info(p_range text, p_range_type text,
+create function range_type_info(p_range text, p_range_type text, empty out boolean,
                                 lower out text, lower_inc out boolean, lower_inf out boolean,
                                 upper out text, upper_inc out boolean, upper_inf out boolean)
 language plpgsql set search_path from current as $$
 begin
-    execute format('select  lower(x.x)::text, upper(x.x)::text,
+    execute format('select  lower(x.x)::text, upper(x.x)::text, isempty(x.x),
                             lower_inc(x.x), upper_inc(x.x), lower_inf(x.x), upper_inf(x.x) 
                     from    ( select $1::%1$I as x) x',p_range_type)
     using   p_range
-    into strict lower, upper, lower_inc, upper_inc, lower_inf, upper_inf;
+    into strict lower, upper, empty, lower_inc, upper_inc, lower_inf, upper_inf;
 end;
 $$;
 
@@ -131,25 +136,37 @@ comment on function range_type_info(text, text, out text, out boolean, out boole
 is E'given a text representation of a range and the name of the range type, create that range\n'
     'and then run the lower(), upper(), lower_inc(), upper_inc(), lower_inf(), and upper_inf() functions';
 
+create function where_clause(p_col text, p_range text, p_range_type text) returns text
+language sql set search_path from current as $$
+select  case
+            when i.lower = i.upper then format('%I = %L',p_col,i.lower)
+            when i.lower_inf and i.upper_inf then 'true'
+            when i.empty then 'false'
+            else    case
+                        when i.lower_inf then ''
+                        when i.lower_inc then format('%I >= %L',p_col,i.lower)
+                        else format('%I > %L',p_col,i.lower)
+                    end ||
+                    case
+                        when not i.lower_inf and not i.upper_inf then ' and ' 
+                        else ''
+                    end ||
+                    case
+                        when i.upper_inf then ''
+                        when i.upper_inc then format('%I <= %L',p_col,i.upper)
+                        else format('%I < %L',p_col,i.upper)
+                    end
+        end
+from    range_type_info(p_range,p_range_type) i;
+$$;
+
+
+comment on function where_clause(text,text,text)
+is E'construct a WHERE clause that would exactly fit the given column, range, and range_type';
+
 create function where_clause(p_partition_class oid) returns text
 language sql set search_path from current as $$
-select  rtrim(
-            ltrim(
-                format ('%s and %s',
-                        case
-                            when i.lower = i.upper then format('%I = %L',m.partition_attribute,i.lower)
-                            when i.lower_inf then 'true'
-                            when i.lower_inc then format('%I >= %L',m.partition_attribute,i.lower)
-                            else format('%I > %L',m.partition_attribute,i.lower)
-                        end,
-                        case
-                            when i.lower = i.upper then 'true' -- already covered in previous section
-                            when i.upper_inf then 'true'
-                            when i.upper_inc then format('%I <= %L',m.partition_attribute,i.upper)
-                            else format('%I < %L',m.partition_attribute,i.upper)
-                        end),
-                'true and '),
-            'and true')
+select  where_clause(m.partition_attribute,p.range,m.range_type::regtype::text)
 from    partition p
 join    master m
 on      m.master_class = p.master_class
@@ -430,6 +447,7 @@ $$;
 grant select,insert,update, delete on master, partition to range_partitioning;
 grant execute on function
     range_type_info(text, text, out text, out boolean, out boolean, out text, out boolean, out boolean),
+    where_clause(text,text,text),
     where_clause(oid),
     trigger_iter(oid, text, integer),
     create_trigger_function(oid), 

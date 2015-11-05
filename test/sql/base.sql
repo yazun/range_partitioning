@@ -5,6 +5,14 @@ begin;
 
 create schema part_test;
 
+
+select  where_clause('x','(,)','int4range') as w1,
+        where_clause('d','(,2015-01-01)','daterange') as w2,
+        where_clause('y','[4,5]','int4range') as w3,
+        where_clause('z','[4,5)','int4range') as w4,
+        where_clause('z','empty','int4range') as w5;
+
+
 create view p_info
 as
 select  c.relname, p.partition_number, p.range
@@ -21,22 +29,20 @@ select  mt.relname as table_name,
         pt.relname as partition_name,
         cons.consrc
 from    pg_namespace vs
-join    pg_class mt               -- all regular tables found in this schema are master tables
+join    pg_class mt
 on      vs.oid = mt.relnamespace
         and
-        mt.relkind = 'r'          -- r = regular table
-join    pg_inherits i             -- every object that inherits from a master table
+        mt.relkind = 'r'
+join    pg_inherits i
 on      i.inhparent = mt.oid
-join    pg_class pt               -- of those objects, the regular tables are partitions
+join    pg_class pt
 on      pt.oid = i.inhrelid
         and
-        pt.relkind = 'r'        -- r = regular table
+        pt.relkind = 'r'
 join    pg_constraint cons
 on      cons.conrelid = pt.oid
         and
-        cons.contype = 'c'      -- c = check constraint
-        and
-        cons.consrc like '%<@%''%''::%'
+        cons.contype = 'c'
 where   vs.nspname = 'part_test'
 and     mt.relname = 'foo'
 order by 1,2,3;
