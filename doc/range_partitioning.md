@@ -150,12 +150,39 @@ Given the oid of a partition, return the WHERE-clause fragment that fits the ran
 The fragment will be expressed as simple < > >= <= tests, and can be blank in the case of the (,) set.
 
 ```sql
-create function where_clause(p_partition_class oid) returns text
+function where_clause(p_col text, p_range text, p_range_type text) returns text;
 ```
+
+Generate the syntax for a where clause which matches the parameters of a given range and type.
+
+### Parameters
+* **p_col** the name of the column to use in the where clause. It does not have to be the actual column of any table, and can be a compound name.
+* **p_range** the text representation of the range value.
+* **p_range_type** the name of the range type
+
+#### Example
+
+```sql
+select  where_clause('x','(,)','int4range') as w1,
+        where_clause('d','(,2015-01-01)','daterange') as w2,
+        where_clause('y','[4,5]','int4range') as w3,
+        where_clause('z','[4,5)','int4range') as w4,
+        where_clause('z','empty','int4range') as w5;
+  w1  |        w2        |          w3          |          w4          |  w5   
+------+------------------+----------------------+----------------------+-------
+ true | d < '01-01-2015' | y >= '4' and y < '6' | z >= '4' and z < '5' | false
+(1 row)
+```
+
+```sql
+function where_clause(p_partition_class oid) returns text
+```
+
+This version of the function derives the column name, range, and range type from an existing partition entry.
 
 ### Parameters
 
-* **p_partition_class**: The oid of the partition
+* **p_partition_class**: The oid of the partition 
 
 #### Example
 
@@ -232,7 +259,4 @@ Permission to use, copy, modify, and distribute this software and its documentat
 IN NO EVENT SHALL MOAT INC. BE LIABLE TO ANY PARTY FOR DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING LOST PROFITS, ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION, EVEN IF Moat, Inc. HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 MOAT INC. SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS IS" BASIS, AND Moat, Inc. HAS NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
-
-
-
 
