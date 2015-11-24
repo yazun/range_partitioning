@@ -150,6 +150,7 @@ Given the oid of a partition, return the WHERE-clause fragment that fits the ran
 The fragment will be expressed as simple < > >= <= tests, and can be blank in the case of the (,) set.
 
 ```sql
+function where_clause(p_col text, p_range text, p_range_type oid) returns text;
 function where_clause(p_col text, p_range text, p_range_type text) returns text;
 ```
 
@@ -158,7 +159,7 @@ Generate the syntax for a where clause which matches the parameters of a given r
 ### Parameters
 * **p_col** the name of the column to use in the where clause. It does not have to be the actual column of any table, and can be a compound name.
 * **p_range** the text representation of the range value.
-* **p_range_type** the name of the range type
+* **p_range_type** the name of the range type, or the oid referencing a range type.
 
 #### Example
 
