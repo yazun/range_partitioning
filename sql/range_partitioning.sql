@@ -57,67 +57,19 @@ $$;
 comment on function create_trigger_function(oid)
 is E'(re)create a trigger function for the given table. This is run as a part of adding/removing partitions.';
 
-
-create function partition_reflect() returns trigger
-language plpgsql as $$
-declare
-    l_update_constraint boolean := false;
-    l_constraint_name text;
-begin
-    select  format('%s_%s',c.relname,new.partition_number)
-    into    strict l_constraint_name
-    from    pg_class c
-    where   c.oid = new.partition_class;
-
-    if TG_OP = 'UPDATE' then
-        if new.master_class <> old.master_class then
-            raise exception '%', 'Cannot modify master_class';
-        elsif new.partition_number <> old.partition_number then
-            raise exception '%', 'Cannot modify partition_number';
-        elsif new.partition_class <> old.partition_class then
-            raise exception '%', 'Cannot modify partition_class';
-        elsif new.range is distinct from old.range then
-            -- the old constraint has to go
-            execute format('alter table %s drop constraint %I',
-                            new.partition_class::regclass::text,
-                            l_constraint_name);
-            l_update_constraint := true;
-        end if;
-    end if;
-
-    if TG_OP = 'INSERT' then
-        l_update_constraint := true;
-        -- complete the inheritance
-        execute format('alter table %s inherit %s',
-                        new.partition_class::regclass::text,
-                        new.master_class::regclass::text);
-    end if;
-
-    if l_update_constraint then
-        execute format('alter table %s add constraint %I check (%s)',
-                        new.partition_class::regclass::text,
-                        l_constraint_name,
-                        (   select  where_clause(m.partition_attribute,new.range,m.range_type::regtype::text)
-                            from    master m
-                            where   m.master_class = new.master_class ));
-                        /*
-                        ( select partition_attribute from master where master_class = new.master_class ),
-                        new.range,
-                        ( select range_type::regtype::text from master where master_class = new.master_class ));
-                        */
-    end if;
-
-    return new;
-end
+create function get_collation(p_master_class oid) returns text language sql as $$
+select  l.collname::text
+from    master m
+join    pg_range r
+on      r.rngtypid = m.range_type
+left
+join    pg_collation l
+on      l.oid = r.rngcollation
+where   m.master_class = p_master_class;
 $$;
 
-comment on function partition_reflect() 
-is E'Reflect whatever changes were made to the partition table in the actual metadata(constraints, inheritance) of the table.';
-
-create trigger partition_reflect after insert or update on partition for each row execute procedure partition_reflect();
-
-comment on trigger partition_reflect on partition
-is E'Any changes made to the partition table should be reflected in the actual partition metadata';
+comment on function get_collation(p_master_class oid)
+is 'return the text name of the collation for this partition key, if any';
 
 create function range_type_info(p_range text, p_range_type oid, empty out boolean,
                                 lower out text, lower_inc out boolean, lower_inf out boolean,
@@ -129,11 +81,7 @@ begin
     execute format( 'select  lower(x.x)::text, upper(x.x)::text, isempty(x.x), '
                     '        lower_inc(x.x), upper_inc(x.x), lower_inf(x.x), upper_inf(x.x) '
                     'from    ( select $1::%s as x ) x',
-                    (   select  format('%I.%I',s.nspname,t.typname)
-                        from    pg_type t
-                        join    pg_namespace s
-                        on      s.oid = t.typnamespace
-                        where   t.oid = p_range_type ))
+                    (   select  format_type(p_range_type,null)))
     using   p_range
     into strict lower, upper, empty, lower_inc, upper_inc, lower_inf, upper_inf;
 end;
@@ -155,7 +103,14 @@ comment on function range_type_info(text, text, out text, out boolean, out boole
 is E'given a text representation of a range and the name of the range type, create that range\n'
     'and then run the lower(), upper(), lower_inc(), upper_inc(), lower_inf(), and upper_inf() functions';
 
-create function where_clause(p_col text, p_range text, p_range_type oid) returns text
+create function collate_clause(p_collation text) returns text language sql strict as $$
+select format(' COLLATE "%s"',p_collation);
+$$;
+
+comment on function collate_clause(p_collation text)
+is 'create a COLLATE "X" clause if and only if p_collation is not null';
+
+create function where_clause(p_col text, p_range text, p_range_type oid, p_collation text default null) returns text
 language sql set search_path from current as $$
 select  case
             when i.lower = i.upper then format('%I = %L',p_col,i.lower)
@@ -163,8 +118,8 @@ select  case
             when i.empty then 'false'
             else    case
                         when i.lower_inf then ''
-                        when i.lower_inc then format('%I >= %L',p_col,i.lower)
-                        else format('%I > %L',p_col,i.lower)
+                        when i.lower_inc then format('%I%s >= %L',p_col,collate_clause(p_collation),i.lower)
+                        else format('%I%s > %L',p_col,collate_clause(p_collation),i.lower)
                     end ||
                     case
                         when not i.lower_inf and not i.upper_inf then ' and ' 
@@ -172,27 +127,27 @@ select  case
                     end ||
                     case
                         when i.upper_inf then ''
-                        when i.upper_inc then format('%I <= %L',p_col,i.upper)
-                        else format('%I < %L',p_col,i.upper)
+                        when i.upper_inc then format('%I%s <= %L',p_col,collate_clause(p_collation),i.upper)
+                        else format('%I%s < %L',p_col,collate_clause(p_collation),i.upper)
                     end
         end
-from    range_type_info(p_range,p_range_type) i;
+from    range_type_info(p_range,p_range_type) i
 $$;
 
-comment on function where_clause(text,text,oid)
+comment on function where_clause(text,text,oid,text)
 is E'construct a WHERE clause that would exactly fit the given column, range, and range_type';
 
-create function where_clause(p_col text, p_range text, p_range_type text) returns text
+create function where_clause(p_col text, p_range text, p_range_type text, p_collation text default null) returns text
 language sql set search_path from current as $$
-select  where_clause(p_col,p_range,p_range_type::regtype);  
+select  where_clause(p_col,p_range,p_range_type::regtype,p_collation);  
 $$;
 
-comment on function where_clause(text,text,text)
+comment on function where_clause(text,text,text,text)
 is E'construct a WHERE clause that would exactly fit the given column, range, and range_type';
 
 create function where_clause(p_partition_class oid) returns text
 language sql set search_path from current as $$
-select  where_clause(m.partition_attribute,p.range,m.range_type)
+select  where_clause(m.partition_attribute,p.range,m.range_type,get_collation(p.master_class))
 from    partition p
 join    master m
 on      m.master_class = p.master_class
@@ -201,6 +156,91 @@ $$;
 
 comment on function where_clause(oid)
 is E'given a partiton oid, derive the WHERE clause that would exactly fit the range of the partition.';
+
+create function get_exclusion_constraint_name(p_partition_class oid) returns text language sql strict as $$
+select  c.relname::text
+from    pg_class c
+where   c.oid = p_partition_class;
+$$;
+
+comment on function get_exclusion_constraint_name(p_partition_class oid)
+is 'generate the name of the exclusion constraint for this partition';
+
+create function drop_exclusion_constraint(p_partition_class oid) returns void language plpgsql as $$
+begin
+    execute format('alter table %s drop constraint %I',
+                    p_partition_class::regclass::text,
+                    get_exclusion_constraint_name(p_partition_class));
+end
+$$;
+
+comment on function drop_exclusion_constraint(p_partition_class oid)
+is 'internal use only';
+
+
+create function create_exclusion_constraint(p_partition_class oid) returns void language plpgsql as $$
+begin
+    execute format('alter table %s add constraint %I check (%s)',
+                    p_partition_class::regclass::text,
+                    get_exclusion_constraint_name(p_partition_class),
+                    (   select  where_clause(m.partition_attribute,
+                                            p.range,
+                                            m.range_type::regtype::text,
+                                            get_collation(m.master_class))
+                        from    partition p
+                        join    master m
+                        on      m.master_class = p.master_class
+                        where   p.partition_class = p_partition_class));
+end
+$$;
+
+create function refresh_exclusion_constraint(p_partition_class oid) returns boolean language plpgsql as $$
+begin
+    perform drop_exclusion_constraint(p_partition_class);
+    perform create_exclusion_constraint(p_partition_class);
+    return true;
+end
+$$;
+
+comment on function refresh_exclusion_constraint(p_partition_class oid)
+is 'drop and recreate exclusion constraints';
+
+create function partition_reflect() returns trigger
+language plpgsql as $$
+begin
+    if TG_OP = 'UPDATE' then
+        if new.master_class <> old.master_class then
+            raise exception '%', 'Cannot modify master_class';
+        elsif new.partition_number <> old.partition_number then
+            raise exception '%', 'Cannot modify partition_number';
+        elsif new.partition_class <> old.partition_class then
+            raise exception '%', 'Cannot modify partition_class';
+        elsif new.range is distinct from old.range then
+            perform drop_exclusion_constraint(new.partition_class);
+            perform create_exclusion_constraint(new.partition_class);
+        end if;
+    end if;
+
+    if TG_OP = 'INSERT' then
+        -- complete the inheritance
+        execute format('alter table %s inherit %s',
+                        new.partition_class::regclass::text,
+                        new.master_class::regclass::text);
+        perform create_exclusion_constraint(new.partition_class);
+    end if;
+
+    return new;
+end
+$$;
+
+comment on function partition_reflect() 
+is E'Reflect whatever changes were made to the partition table in the actual metadata(constraints, inheritance) of the table.';
+
+create trigger partition_reflect after insert or update on partition for each row execute procedure partition_reflect();
+
+comment on trigger partition_reflect on partition
+is E'Any changes made to the partition table should be reflected in the actual partition metadata';
+
 
 create function trigger_iter(   p_master_class oid,
                                 p_range in text default '(,)',
@@ -472,14 +512,19 @@ grant select,insert,update, delete on master, partition to range_partitioning;
 grant execute on function
     range_type_info(text, oid, out text, out boolean, out boolean, out text, out boolean, out boolean),
     range_type_info(text, text, out text, out boolean, out boolean, out text, out boolean, out boolean),
-    where_clause(text,text,oid),
-    where_clause(text,text,text),
+    where_clause(text,text,oid,text),
+    where_clause(text,text,text,text),
     where_clause(oid),
     trigger_iter(oid, text, integer),
     create_trigger_function(oid), 
     create_parent(text, text, text),
     create_partition (text, text),
-    drop_partition (text, text) 
+    drop_partition (text, text),
+    get_collation(p_master_class oid),
+    get_exclusion_constraint_name(p_partition_class oid),
+    drop_exclusion_constraint(p_partition_class oid),
+    create_exclusion_constraint(p_partition_class oid),
+    refresh_exclusion_constraint(p_partition_class oid)
     to range_partitioning;
 
 
