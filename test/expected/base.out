@@ -261,11 +261,11 @@ select * from part_test.bar_p2 order by 1;
 select master_class::regclass::text as m, partition_class::regclass::text as p, range, where_clause(partition_class) as sql
 from partition
 order by 1,2;
-       m       |        p         | range |           sql            
----------------+------------------+-------+--------------------------
- part_test.bar | part_test.bar_p0 | [C,)  | str >= 'C'
- part_test.bar | part_test.bar_p1 | (,A)  | str < 'A'
- part_test.bar | part_test.bar_p2 | [A,C) | str >= 'A' and str < 'C'
+       m       |        p         | range |                       sql                        
+---------------+------------------+-------+--------------------------------------------------
+ part_test.bar | part_test.bar_p0 | [C,)  | str COLLATE "C" >= 'C'
+ part_test.bar | part_test.bar_p1 | (,A)  | str COLLATE "C" < 'A'
+ part_test.bar | part_test.bar_p2 | [A,C) | str COLLATE "C" >= 'A' and str COLLATE "C" < 'C'
  part_test.foo | part_test.foo_p2 | (,)   | true
 (4 rows)
 
