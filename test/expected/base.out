@@ -1,5 +1,6 @@
 begin;
-\set ECHO none
+\set ECHO queries
+create extension range_partitioning;
 create schema part_test;
 select  where_clause('x','(,)','int4range') as w1,
         where_clause('d','(,2015-01-01)','daterange') as w2,
@@ -295,5 +296,14 @@ select * from part_test.bar_p2 order by 1;
  ABEL
  BAKER
 (2 rows)
+
+set search_path = public;
+select partition_class::regclass::text, refresh_exclusion_constraint(partition_class) from partition order by 1;
+ partition_class  | refresh_exclusion_constraint 
+------------------+------------------------------
+ part_test.bar_p0 | t
+ part_test.bar_p2 | t
+ part_test.foo_p2 | t
+(3 rows)
 
 rollback;

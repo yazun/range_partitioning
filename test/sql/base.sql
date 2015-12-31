@@ -1,7 +1,6 @@
 begin;
-\set ECHO none
-\i sql/range_partitioning.sql
-\set ECHO all
+\set ECHO queries
+create extension range_partitioning;
 
 create schema part_test;
 
@@ -122,6 +121,9 @@ select * from part_test.bar_p0 order by 1;
 
 select * from part_test.bar_p2 order by 1;
 
+set search_path = public;
+
+select partition_class::regclass::text, refresh_exclusion_constraint(partition_class) from partition order by 1;
 
 rollback;
 
