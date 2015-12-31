@@ -154,7 +154,7 @@ begin
                 join	pg_extension x on x.oid = d.refobjid
                 where   x.extname = 'range_partitioning' )
     loop
-        execute format('grant execute on %s(%s) to range_partitioning',r.proname,r.args);
+        execute format('grant execute on function %s(%s) to range_partitioning',r.proname,r.args);
     end loop;
 end;
 $$;
