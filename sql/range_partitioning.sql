@@ -194,6 +194,9 @@ begin
 end
 $$;
 
+comment on function create_exclusion_constraint(p_partition_class oid)
+is 'create the exclusion constraint for a given partition';
+
 create function refresh_exclusion_constraint(p_partition_class oid) returns boolean language plpgsql as $$
 begin
     perform drop_exclusion_constraint(p_partition_class);
@@ -509,23 +512,22 @@ end
 $$;
 
 grant select,insert,update, delete on master, partition to range_partitioning;
-grant execute on function
-    range_type_info(text, oid, out text, out boolean, out boolean, out text, out boolean, out boolean),
-    range_type_info(text, text, out text, out boolean, out boolean, out text, out boolean, out boolean),
-    where_clause(text,text,oid,text),
-    where_clause(text,text,text,text),
-    where_clause(oid),
-    trigger_iter(oid, text, integer),
-    create_trigger_function(oid), 
-    create_parent(text, text, text),
-    create_partition (text, text),
-    drop_partition (text, text),
-    get_collation(p_master_class oid),
-    get_exclusion_constraint_name(p_partition_class oid),
-    drop_exclusion_constraint(p_partition_class oid),
-    create_exclusion_constraint(p_partition_class oid),
-    refresh_exclusion_constraint(p_partition_class oid)
-    to range_partitioning;
+
+-- grant execute on all functions in this extension to role range_partitioning 
+do $$
+declare r record;
+begin
+    for r in (  select	p.proname, pg_get_function_identity_arguments(p.oid) as args
+                from	pg_proc p
+                join	pg_depend d on d.objid = p.oid and d.deptype = 'e'
+                join	pg_extension x on x.oid = d.refobjid
+                where   x.extname = 'range_partitioning' )
+    loop
+        execute format('grant execute on %s(%s) to range_partitioning',r.proname,r.args);
+    end loop;
+end;
+$$
+
 
 
 
