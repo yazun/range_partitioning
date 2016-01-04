@@ -197,7 +197,8 @@ $$;
 comment on function create_exclusion_constraint(p_partition_class oid)
 is 'create the exclusion constraint for a given partition';
 
-create function refresh_exclusion_constraint(p_partition_class oid) returns boolean language plpgsql as $$
+create function refresh_exclusion_constraint(p_partition_class oid) returns boolean
+language plpgsql set search_path from current as $$
 begin
     perform drop_exclusion_constraint(p_partition_class);
     perform create_exclusion_constraint(p_partition_class);
