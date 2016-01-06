@@ -5,6 +5,9 @@ create table master (
     insert_trigger_function text not null
 );
 
+-- configure this table to not be ignored by pg_dump
+select pg_catalog.pg_extension_config_dump('master', '');
+
 comment on table master
 is E'every table that is range partitioned will have an entry here.';
 
@@ -28,6 +31,9 @@ create table partition (
     range text not null,
     unique(master_class,partition_number)
 );
+
+-- configure this table to not be ignored by pg_dump
+select pg_catalog.pg_extension_config_dump('partition', '');
 
 comment on table partition
 is E'every partition must have an entry in this table';
@@ -526,8 +532,8 @@ begin
     loop
         execute format('grant execute on function %s(%s) to range_partitioning',r.proname,r.args);
     end loop;
-end;
-$$
+end
+$$;
 
 
 

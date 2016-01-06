@@ -1,12 +1,18 @@
 SET client_min_messages = warning;
 begin;
-drop function drop_partition (text,text) cascade;
-drop function create_partition (text,text) cascade;
-drop function create_parent(text,text,text) cascade;
-drop function create_trigger_function(oid) cascade;
-drop function trigger_iter(oid,text,integer) cascade;
-drop function where_clause(oid) cascade;
-drop function range_type_info(text,text,text,boolean,boolean,text,boolean,boolean) cascade;
+do $$
+declare r record;
+begin
+    for r in (  select p.proname, pg_get_function_identity_arguments(p.oid) as args
+                from   pg_proc p
+                join   pg_depend d on d.objid = p.oid and d.deptype = 'e'
+                join   pg_extension x on x.oid = d.refobjid
+                where   x.extname = 'range_partitioning' )
+    loop
+        execute format('drop function %s(%s) cascade',r.proname,r.args);
+    end loop;
+end
+$$;
 drop table partition cascade;
 drop table master cascade;
 commit;
