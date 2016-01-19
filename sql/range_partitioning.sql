@@ -32,6 +32,25 @@ create table partition (
     unique(master_class,partition_number)
 );
 
+create view master_partition
+as
+select  m.*,
+        p.partition_class,
+        p.partition_number,
+        p.range,
+        l.collname::text as collation_name
+from    master m
+join    partition p
+on      p.master_class = m.master_class
+join    pg_range r
+on      r.rngtypid = m.range_type
+left
+join    pg_collation l
+on      l.oid = r.rngcollation;
+
+comment on view master_partition
+is 'view to join all relevant partition information';
+
 -- configure this table to not be ignored by pg_dump
 select pg_catalog.pg_extension_config_dump('partition', '');
 
@@ -50,6 +69,71 @@ is E'the number of this partition, used only to ensure unique partition names';
 comment on column partition.range
 is E'text representation of the range enforced by the check constraint';
 
+create or replace function value_in_range(p_value text, p_range text, p_range_type text) returns boolean
+language plpgsql set search_path from current as $$
+declare
+    l_result boolean;
+begin
+    execute format('select $1::%s <@ $2::%s',
+                    (   select  format_type(rngsubtype,null)
+                        from    pg_range
+                        where   rngtypid = p_range_type::regtype ),
+                    p_range_type::regtype::text)
+    using p_value, p_range
+    into l_result;
+    return l_result;
+end
+$$;
+
+comment on function value_in_range(text,text,text)
+is 'determine if p_value would fit into a the range p_range of type p_range_type';
+
+create or replace function is_subrange(p_little_range text, p_big_range text, p_range_type text) returns boolean
+language plpgsql set search_path from current as $$
+declare
+    l_result boolean;
+begin
+    execute format('select $1::%1$I <@ $2::%1$I',p_range_type)
+    into    l_result
+    using   p_little_range, p_big_range;
+    return l_result;
+end
+$$;
+
+comment on function is_subrange(text,text,text)
+is 'determine if p_little_range is a valid subrange of p_big_range';
+
+create or replace function range_add(p_range_x text, p_range_y text, p_range_type text) returns text
+language plpgsql set search_path from current as $$
+declare
+    l_result text;
+begin
+    execute format('select $1::%1$s + $2::%1$s',p_range_type)
+    using p_range_x, p_range_y
+    into l_result;
+    return l_result;
+end
+$$;
+
+comment on function range_add(p_range_x text, p_range_y text, p_range_type text)
+is 'add two ranges together and return the text representation of the result';
+
+create or replace function range_subtract(p_range_x text, p_range_y text, p_range_type text) returns text
+language plpgsql set search_path from current as $$
+declare
+    l_result text;
+begin
+    execute format('select $1::%1$s - $2::%1$s',p_range_type)
+    using p_range_x, p_range_y
+    into l_result;
+    return l_result;
+end
+$$;
+
+comment on function range_subtract(p_range_x text, p_range_y text, p_range_type text)
+is 'subtract range y from range x together and return the text representation of the result';
+
+
 create or replace function create_trigger_function(p_master_class oid) returns void
 language plpgsql as $$
 begin
@@ -63,15 +147,11 @@ $$;
 comment on function create_trigger_function(oid)
 is E'(re)create a trigger function for the given table. This is run as a part of adding/removing partitions.';
 
-create function get_collation(p_master_class oid) returns text language sql as $$
-select  l.collname::text
-from    master m
-join    pg_range r
-on      r.rngtypid = m.range_type
-left
-join    pg_collation l
-on      l.oid = r.rngcollation
-where   m.master_class = p_master_class;
+create function get_collation(p_master_class oid) returns text
+language sql as $$
+select  collation_name
+from    master_partition
+where   master_class = p_master_class;
 $$;
 
 comment on function get_collation(p_master_class oid)
@@ -153,11 +233,9 @@ is E'construct a WHERE clause that would exactly fit the given column, range, an
 
 create function where_clause(p_partition_class oid) returns text
 language sql set search_path from current as $$
-select  where_clause(m.partition_attribute,p.range,m.range_type,get_collation(p.master_class))
-from    partition p
-join    master m
-on      m.master_class = p.master_class
-where   p.partition_class = p_partition_class;
+select  where_clause(partition_attribute,range,range_type,collation_name)
+from    master_partition
+where   partition_class = p_partition_class;
 $$;
 
 comment on function where_clause(oid)
@@ -171,6 +249,31 @@ $$;
 
 comment on function get_exclusion_constraint_name(p_partition_class oid)
 is 'generate the name of the exclusion constraint for this partition';
+
+create function constructor_clause(p_low text, p_high text, p_bounds text, p_range_type_name text) returns text
+language sql set search_path from current as $$
+select  format('%I(%L,%L,%L)',
+                p_range_type_name,
+                p_low,
+                p_high,
+                p_bounds);
+$$;
+
+comment on function constructor_clause(text,text,text,text)
+is E'construct a range_type(low,high,bounds) clause for dynamic sql';
+
+create function get_destination_partition(p_master_table text, p_value text) returns text
+language sql set search_path from current as $$
+-- Invoking a dynamic sql function for every row is slower per row, but the effect costs 3ms for a 100 partition table
+-- and 200ms for a 10,000 partition table. Cleaner SQL is worth that.
+select  partition_class::regclass::text
+from    master_partition
+where   master_class = p_master_table::regclass
+and     value_in_range(p_value,range,range_type::regtype::text);
+$$;
+
+comment on function get_destination_partition(p_master_table text, p_value text)
+is 'get the name of the partition that can contain p_value for p_master_table';
 
 create function drop_exclusion_constraint(p_partition_class oid) returns void language plpgsql as $$
 begin
@@ -189,14 +292,7 @@ begin
     execute format('alter table %s add constraint %I check (%s)',
                     p_partition_class::regclass::text,
                     get_exclusion_constraint_name(p_partition_class),
-                    (   select  where_clause(m.partition_attribute,
-                                            p.range,
-                                            m.range_type::regtype::text,
-                                            get_collation(m.master_class))
-                        from    partition p
-                        join    master m
-                        on      m.master_class = p.master_class
-                        where   p.partition_class = p_partition_class));
+                    where_clause(p_partition_class));
 end
 $$;
 
@@ -283,16 +379,11 @@ begin
             -- there is only one partition, so just insert into it
             return format(E'insert into %s values(new.*);\n', r.partition_name);
         elsif r.is_lower_half then
-        --elsif r.partition_num < r.median_partition then
             -- add this partition to the lower range
-            execute format('select $1::%1$s + $2::%1$s',l_range_type::regtype::text)
-            using l_lower_range, r.range
-            into l_lower_range;
+            l_lower_range := range_add(l_lower_range, r.range, l_range_type);
         else
             -- add this partition to the upper range, good thing they're already in order
-            execute format('select $1::%1$s + $2::%1$s',l_range_type::regtype::text)
-            using l_upper_range, r.range
-            into l_upper_range;
+            l_upper_range := range_add(l_upper_range, r.range, l_range_type);
         end if;
     end loop;
 
@@ -394,13 +485,12 @@ begin
 
     begin
         -- verify new range is entirely within an existing range, and matches one edge of that range
-        execute format('select partition_class, (range::%1$s - $2::%1$s)::text
-                        from partition
-                        where master_class = $1
-                        and range::%1$s @> $2::%1$s',
-                        mr.range_type::regtype::text)
-        using   mr.master_class, p_new_partition_range
-        into strict pr.partition_class, l_range_difference;
+        select  partition_class,
+                range_subtract(range,p_new_partition_range,mr.range_type::regtype::text)
+        into strict pr.partition_class, l_range_difference
+        from    partition
+        where   master_class = mr.master_class
+        and     is_subrange(p_new_partition_range,range,mr.range_type::regtype::text);
     exception
         when no_data_found or data_exception then
             raise exception 'New range {%} must match have one boundary in common with an existing partition',
@@ -534,7 +624,6 @@ begin
     end loop;
 end
 $$;
-
 
 
 

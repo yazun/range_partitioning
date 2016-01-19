@@ -1,3 +1,14 @@
+1.2.0 (2016.01.20):
+    - master_partition view.
+    - dynamic range functions - where the exact range type is not known at query time
+        - value_in_range():  value <@ range
+        - is_subrange(): little <@ big
+        - range_add(): range1 + range2
+        - range_subtract(): range1 - range2 
+        - constructor_clause(): generate sql that will generate a range_type(low,high,bounds)
+    - get_destination_partition() for probing which partition would receive a tuple.
+    - leverage the dynamic range functions within partition management. they aren't as efficient as pure dynamic sql
+      but the cost is miminal (a few ms for 100 partitions, 150ms for 10,000 partitions), and the code is a lot cleaner
 1.1.1 (2016.01.06):
     - make master and partition pg_dump-able.
 1.1 (2015.12.31):

@@ -1,7 +1,76 @@
-begin;
 \set ECHO queries
 create extension range_partitioning;
 create schema part_test;
+select value_in_range('5','[1,10]','int4range');
+ value_in_range 
+----------------
+ t
+(1 row)
+
+select value_in_range('11','[1,10]','int4range');
+ value_in_range 
+----------------
+ f
+(1 row)
+
+select is_subrange('[4,5]','[1,10)','int4range');
+ is_subrange 
+-------------
+ t
+(1 row)
+
+select is_subrange('[4,5]','[7,10)','int4range');
+ is_subrange 
+-------------
+ f
+(1 row)
+
+select is_subrange('[4,7]','[5,10)','int4range');
+ is_subrange 
+-------------
+ f
+(1 row)
+
+select range_add('[4,5]','(5,10]','int4range');
+ range_add 
+-----------
+ [4,11)
+(1 row)
+
+select range_add('[4,5]','[5,10]','int4range');
+ range_add 
+-----------
+ [4,11)
+(1 row)
+
+select range_add('[4,5]','[7,10]','int4range');
+ERROR:  result of range union would not be contiguous
+CONTEXT:  SQL statement "select $1::int4range + $2::int4range"
+PL/pgSQL function range_add(text,text,text) line 5 at EXECUTE
+select range_subtract('[1,10]','(5,10]','int4range');
+ range_subtract 
+----------------
+ [1,6)
+(1 row)
+
+select range_subtract('[1,10]','[1,5]','int4range');
+ range_subtract 
+----------------
+ [6,11)
+(1 row)
+
+select range_subtract('[1,5]','[3,10]','int4range');
+ range_subtract 
+----------------
+ [1,3)
+(1 row)
+
+select constructor_clause('1','5','[]','int4range');
+   constructor_clause    
+-------------------------
+ int4range('1','5','[]')
+(1 row)
+
 select  where_clause('x','(,)','int4range') as w1,
         where_clause('d','(,2015-01-01)','daterange') as w2,
         where_clause('y','[4,5]','int4range') as w3,
@@ -131,6 +200,18 @@ select * from part_test.foo_p2 order by 1;
  15000
 (1 row)
 
+select get_destination_partition('part_test.foo','4998');
+ get_destination_partition 
+---------------------------
+ part_test.foo_p0
+(1 row)
+
+select get_destination_partition('part_test.foo','5000');
+ get_destination_partition 
+---------------------------
+ part_test.foo_p1
+(1 row)
+
 select master_class::regclass::text as m, partition_class::regclass::text as p, range, where_clause(partition_class) as sql
 from partition
 order by 1,2;
@@ -190,6 +271,76 @@ select * from part_test.foo_p2 order by 1;
 (4 rows)
 
 create type range_partitioning_textrange_c as range (subtype = text, collation = "C");
+select value_in_range('abc','[a,c]','range_partitioning_textrange_c');
+ value_in_range 
+----------------
+ t
+(1 row)
+
+select value_in_range('efg','[a,c]','range_partitioning_textrange_c');
+ value_in_range 
+----------------
+ f
+(1 row)
+
+select is_subrange('[abc,def]','[a,e)','range_partitioning_textrange_c');
+ is_subrange 
+-------------
+ t
+(1 row)
+
+select is_subrange('[abc,xyz]','[a,e)','range_partitioning_textrange_c');
+ is_subrange 
+-------------
+ f
+(1 row)
+
+select is_subrange('[abc,def]','[b,z)','range_partitioning_textrange_c');
+ is_subrange 
+-------------
+ f
+(1 row)
+
+select range_add('[abc,def]','(def,xyz]','range_partitioning_textrange_c');
+ range_add 
+-----------
+ [abc,xyz]
+(1 row)
+
+select range_add('[abc,def]','[def,xyz]','range_partitioning_textrange_c');
+ range_add 
+-----------
+ [abc,xyz]
+(1 row)
+
+select range_add('[abc,def]','[ijk,xyz]','range_partitioning_textrange_c');
+ERROR:  result of range union would not be contiguous
+CONTEXT:  SQL statement "select $1::range_partitioning_textrange_c + $2::range_partitioning_textrange_c"
+PL/pgSQL function range_add(text,text,text) line 5 at EXECUTE
+select range_subtract('[abc,xyz]','[abc,def]','range_partitioning_textrange_c');
+ range_subtract 
+----------------
+ (def,xyz]
+(1 row)
+
+select range_subtract('[abc,xyz]','[ijk,xyz]','range_partitioning_textrange_c');
+ range_subtract 
+----------------
+ [abc,ijk)
+(1 row)
+
+select range_subtract('[def,deg]','[abc,xyz]','range_partitioning_textrange_c');
+ range_subtract 
+----------------
+ empty
+(1 row)
+
+select constructor_clause('ab,c','def','[]','range_partitioning_textrange_c');
+                constructor_clause                 
+---------------------------------------------------
+ range_partitioning_textrange_c('ab,c','def','[]')
+(1 row)
+
 create table part_test.bar(str text collate "C");
 select exists( select null from pg_attribute where attrelid = 'part_test.bar'::regclass and attname = 'str' );
  exists 
@@ -238,6 +389,18 @@ select * from p_info order by 1,2;
  bar_p2  |                2 | [A,C)
  foo_p2  |                2 | (,)
 (4 rows)
+
+select get_destination_partition('part_test.bar','ABEL');
+ get_destination_partition 
+---------------------------
+ part_test.bar_p2
+(1 row)
+
+select get_destination_partition('part_test.bar','CHARLIE');
+ get_destination_partition 
+---------------------------
+ part_test.bar_p0
+(1 row)
 
 insert into part_test.bar
 values ('ABEL'),('BAKER'),('CHARLIE');
@@ -306,4 +469,3 @@ select partition_class::regclass::text, refresh_exclusion_constraint(partition_c
  part_test.foo_p2 | t
 (3 rows)
 
-rollback;
