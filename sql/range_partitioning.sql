@@ -93,7 +93,7 @@ language plpgsql set search_path from current as $$
 declare
     l_result boolean;
 begin
-    execute format('select $1::%1$I <@ $2::%1$I',p_range_type)
+    execute format('select $1::%1$s <@ $2::%1$s',p_range_type)
     into    l_result
     using   p_little_range, p_big_range;
     return l_result;
