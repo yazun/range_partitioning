@@ -1,5 +1,6 @@
 1.2.1 (2016.01.21):
     - fix formatting in is_subrange()
+    - proper permission inheritance
 1.2.0 (2016.01.20):
     - master_partition view.
     - dynamic range functions - where the exact range type is not known at query time

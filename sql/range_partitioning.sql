@@ -436,6 +436,11 @@ begin
                     r.partition_table,
                     r.source_table);
 
+    -- copy permissions from master
+    update  pg_class
+    set     relacl = (  select relacl from pg_class where oid = r.master_oid )
+    where   oid = r.partition_table::regclass;
+
     -- create the record and set the name of the trigger function so that it can be created
     insert into master 
     values (r.master_oid, p_range_column_name, r.range_type_oid, r.insert_trigger_function);
@@ -516,6 +521,11 @@ begin
     execute format('create table %s(like %s including indexes)',
                     l_new_partition,
                     mr.master_class::regclass::text);
+
+    -- copy permissions from master
+    update  pg_class
+    set     relacl = (  select relacl from pg_class where oid = mr.master_class )
+    where   oid = l_new_partition::regclass;
 
     -- inserting into partition will automatically add the check constraint on the table and complete the inherance
     insert into partition(partition_class,master_class,partition_number,range)
@@ -609,6 +619,7 @@ end
 $$;
 
 grant select,insert,update, delete on master, partition to range_partitioning;
+grant select on master_partition to range_partitioning;
 
 -- grant execute on all functions in this extension to role range_partitioning 
 do $$

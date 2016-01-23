@@ -11,3 +11,4 @@ begin
 end
 $$;
 
+grant select on master_partition to range_partitioning;
