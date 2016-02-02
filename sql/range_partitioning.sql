@@ -404,32 +404,96 @@ is E'recursive function to do a binary traversal of the partitions in a table,\n
 
 create function create_parent(  p_qual_table_name text,
                                 p_range_column_name text,
-                                p_dest_schema text default null) returns void
+                                p_dest_schema text default null,
+                                p_qual_range_type text default null) returns void
 language plpgsql set search_path from current as $$
 declare
     r record;
+    l_master_oid oid;
+    l_range_type_oid oid;
+    l_attribute_oid oid;
 begin
+    -- validate table
+    begin
+        l_master_oid := p_qual_table_name::regclass;
+    exception
+        when invalid_schema_name then
+            raise exception '%s is an unknown schema', p_qual_table_name;
+        when undefined_table then
+            raise exception '%s is an unknown table', p_qual_table_name;
+        when others then raise;
+    end;
+
+    -- validate partitioning column
+    if not exists(  select  null
+                    from    pg_attribute
+                    where   attrelid = l_master_oid
+                    and     attname = p_range_column_name ) then
+        raise exception 'Column % not found on  %', p_range_column_name, p_qual_table_name;
+    end if;
+
+    if p_qual_range_type is not null then
+        begin
+            l_range_type_oid := p_qual_range_type::regtype;
+        exception
+            when invalid_schema_name then
+                raise exception '%s is an unknown schema', p_qual_range_type;
+            when undefined_object then
+                raise exception '%s is an unknown type', p_qual_range_type;
+            when others then raise;
+        end;
+        if not exists ( select  null
+                        from    pg_attribute a
+                        join    pg_range rt
+                        on      rt.rngsubtype = a.atttypid
+                        and     rt.rngcollation = a.attcollation
+                        where   a.attrelid = l_master_oid
+                        and     a.attname = p_range_column_name
+                        and     rt.rngtypid = l_range_type_oid ) then
+            raise exception '% is not a suitable range type for % on %',
+                            p_qual_range_type,
+                            p_range_column_name,
+                            p_qual_table_name;
+        end if;
+    else
+        begin
+            select  rt.rngtypid
+            into    strict l_range_type_oid
+            from    pg_attribute a
+            join    pg_range rt
+            on      rt.rngsubtype = a.atttypid
+            and     rt.rngcollation = a.attcollation
+            where   a.attrelid = l_master_oid
+            and     a.attname = p_range_column_name;
+        exception
+            when no_data_found then
+                raise exception 'No suitable range type for % on %', p_range_column_name, p_qual_table_name;
+            when too_many_rows then
+                raise exception 'Multiple range types (%) are valid for column % on %',
+                                (   select  string_agg(rt.rngtypid::regtype::text, ', ')
+                                    from    pg_attribute a
+                                    join    pg_range rt
+                                    on      rt.rngsubtype = a.atttypid
+                                    and     rt.rngcollation = a.attcollation
+                                    where   a.attrelid = l_master_oid
+                                    and     a.attname = p_range_column_name ),
+                                p_range_column_name,
+                                p_qual_table_name
+                    using hint = 'Specify one of those types in the p_qual_range_type parameter';
+            when others then raise;
+        end;
+    end if;
+
     -- find the range type for the partitioning column, must find exactly one, fail otherwise
-    select  c.oid as master_oid,
-            rt.rngtypid as range_type_oid,
-            format('%I.%I',n.nspname,c.relname) as source_table,
+    select  format('%I.%I',n.nspname,c.relname) as source_table,
             format('%I.%I',coalesce(p_dest_schema,n.nspname),c.relname || '_p0') as partition_table,
             format('%I.%I',coalesce(p_dest_schema,n.nspname),c.relname || '_ins_trigger') as insert_trigger_function,
-            format('%I',c.relname || '_ins_trig') as insert_trigger_name,
-            rt.rngtypid::regtype::text
+            format('%I',c.relname || '_ins_trig') as insert_trigger_name
     into    strict r
     from    pg_class c
     join    pg_namespace n
     on      n.oid = c.relnamespace
-    join    pg_attribute a
-    on      a.attrelid = c.oid
-    join    pg_range rt
-    on      rt.rngsubtype = a.atttypid
-    and     rt.rngcollation = a.attcollation
-    join    pg_type t
-    on      t.oid = rt.rngtypid
-    where   c.oid = p_qual_table_name::regclass
-    and     a.attname = p_range_column_name;
+    where   c.oid = l_master_oid;
 
     -- create the table that will inherit from the master table
     execute format('create table %s(like %s including indexes)',
@@ -438,23 +502,23 @@ begin
 
     -- copy permissions from master
     update  pg_class
-    set     relacl = (  select relacl from pg_class where oid = r.master_oid )
+    set     relacl = (  select relacl from pg_class where oid = l_master_oid )
     where   oid = r.partition_table::regclass;
 
     -- create the record and set the name of the trigger function so that it can be created
     insert into master 
-    values (r.master_oid, p_range_column_name, r.range_type_oid, r.insert_trigger_function);
+    values (l_master_oid, p_range_column_name, l_range_type_oid, r.insert_trigger_function);
 
     -- inserting a row here will automatically add the constraint on the partition and complete the inheritance
     insert into partition(partition_class,master_class,partition_number,range)
-    values (r.partition_table::regclass, r.master_oid, 0, '(,)');
+    values (r.partition_table::regclass, l_master_oid, 0, '(,)');
 
     -- migrate rows to main partition
     execute format('with d as (delete from %s returning *) insert into %s select * from d',
                     r.source_table,
                     r.partition_table);
 
-    perform create_trigger_function(r.master_oid);
+    perform create_trigger_function(l_master_oid);
 
     execute format('create trigger %s before insert on %s for each row execute procedure %s()',
                     r.insert_trigger_name,
@@ -463,7 +527,7 @@ begin
 end;
 $$;
 
-comment on function create_parent(text,text,text)
+comment on function create_parent(text,text,text,text)
 is E'Convert a normal table into the master table of a partition set.';
 
 create function create_partition (  p_qual_table_name text,

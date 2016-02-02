@@ -162,4 +162,17 @@ set search_path = public;
 
 select partition_class::regclass::text, refresh_exclusion_constraint(partition_class) from partition order by 1;
 
+create type duplicate_int_range as range (subtype = integer );
+
+create table dupe_test( x integer);
+
+select create_parent('dupe_test','x');
+
+select create_parent('dupe_test','x', p_qual_range_type := 'int4range');
+
+create table dupe_test2( x integer);
+
+select create_parent('dupe_test2','x', p_qual_range_type := 'duplicate_int_range');
+
+
 

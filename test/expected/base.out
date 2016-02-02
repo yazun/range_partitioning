@@ -469,3 +469,21 @@ select partition_class::regclass::text, refresh_exclusion_constraint(partition_c
  part_test.foo_p2 | t
 (3 rows)
 
+create type duplicate_int_range as range (subtype = integer );
+create table dupe_test( x integer);
+select create_parent('dupe_test','x');
+ERROR:  Multiple range types (int4range, duplicate_int_range) are valid for column x on dupe_test
+HINT:  Specify one of those types in the p_qual_range_type parameter
+select create_parent('dupe_test','x', p_qual_range_type := 'int4range');
+ create_parent 
+---------------
+ 
+(1 row)
+
+create table dupe_test2( x integer);
+select create_parent('dupe_test2','x', p_qual_range_type := 'duplicate_int_range');
+ create_parent 
+---------------
+ 
+(1 row)
+

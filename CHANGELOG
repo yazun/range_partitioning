@@ -1,3 +1,10 @@
+1.2.2 (2016.02.01):
+    - allow user to specify a range type in create_parent()
+    - additional validation checks for:
+        - mulitple matching range types when no range type specified
+        - invalid/incompatible range type specified
+        - invalid table name
+        - invalid column name
 1.2.1 (2016.01.21):
     - fix formatting in is_subrange()
     - proper permission inheritance
