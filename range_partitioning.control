@@ -1,4 +1,4 @@
 # range_partitioning extension
 comment = 'Partition a table by static ranges'
-default_version = '1.2.1'
+default_version = '1.2.2'
 relocatable = true
