@@ -17,7 +17,8 @@ CREATE EXTENSION range_partitioning SCHEMA range_partitioning;
 ```sql
 function create_parent( p_qual_table_name text,
                         p_range_column_name text,
-                        p_dest_schema text default null) returns void
+                        p_dest_schema text default null,
+                        p_qual_range_type text default null) returns void
 ```
 
 Convert a table from a normal table to the parent of a single partition.
@@ -29,6 +30,7 @@ Create the necessary trigger such that rows inserted into the parent table actua
 * **p_qual_table_name**: The qualified name of the table to be partitioned.
 * **p_range_column_name**: The column in the parent table which will be the partition key.
 * **p_dest_schema_name**: The name of the schema where new partitions should be created. The default is to use the schema of the parent table.
+* **p_qual_range_type**: The qualified name of the range_type to use. The range type specified must have a subtype compatible with the column specified in p_range_column_name. This parameter is only required in the event that more than one compatible range type exists for the partitioning column. 
 
 #### Example
 
