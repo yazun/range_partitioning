@@ -308,7 +308,7 @@ begin
         where   oid = new.partition_class;
 
         -- set ownership
-        execute format('alter table %I.%I set owner to %I',
+        execute format('alter table %I.%I owner to %I',
                         (   select  s.nspname
                             from    pg_class c
                             join    pg_namespace s
@@ -321,7 +321,7 @@ begin
                             from    pg_class c
                             join    pg_authid a
                             on      a.oid = c.relowner
-                            where   c.oid = l_model_oid ) );
+                            where   c.oid = new.master_class ) );
     end if;
     -- after trigger, no need to return anything special
     return null;
