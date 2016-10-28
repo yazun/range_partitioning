@@ -2,7 +2,7 @@ create table master (
     master_class oid not null primary key,
     partition_attribute text not null,
     range_type oid not null,
-    insert_trigger_function text not null
+    insert_trigger_function text not null unique
 );
 
 -- configure this table to not be ignored by pg_dump
@@ -733,6 +733,32 @@ $$;
 
 comment on function drop_partition (text, text)
 is E'merge two adjacent partitions into one single partition';
+
+create function drop_parent( p_qual_table_name text ) returns void
+language plpgsql set search_path from current as $$
+declare
+    r record;
+begin
+    select  m.*,
+            format('%I',c.relname || '_ins_trig') as insert_trigger_name
+    into    r
+    from    master m
+    join    pg_class c
+    on      c.oid = m.master_class
+    where   m.master_class = p_qual_table_name::regclass;
+
+    delete from partition where master_class = r.master_class;
+
+    execute format('drop function if exists %s()', r.insert_trigger_function);
+
+    execute format('drop trigger if exists %s on %s', r.insert_trigger_name, p_qual_table_name );
+
+    delete from master where master_class = r.master_class;
+end;
+$$;
+
+comment on function drop_parent( p_qual_table_name text )
+is E'Stop management of the table as a range-partitioned table. Leave existing tables as-is';
 
 do $$
 begin
