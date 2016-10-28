@@ -134,19 +134,6 @@ comment on function range_subtract(p_range_x text, p_range_y text, p_range_type 
 is 'subtract range y from range x together and return the text representation of the result';
 
 
-create or replace function create_trigger_function(p_master_class oid) returns void
-language plpgsql as $$
-begin
-    execute format(E'create or replace function %s() returns trigger language plpgsql as $BODY$\n'
-                    'begin\n%sreturn null;\nend;$BODY$',
-                    ( select insert_trigger_function from master where master_class = p_master_class ),
-                    trigger_iter(p_master_class));
-end;
-$$;
-
-comment on function create_trigger_function(oid)
-is E'(re)create a trigger function for the given table. This is run as a part of adding/removing partitions.';
-
 create function get_collation(p_master_class oid) returns text
 language sql as $$
 select  collation_name
@@ -311,9 +298,25 @@ $$;
 comment on function refresh_exclusion_constraint(p_partition_class oid)
 is 'drop and recreate exclusion constraints';
 
-create function partition_reflect() returns trigger
+create function partition_copy_acl() returns trigger
 language plpgsql security definer set search_path from current as $$
 begin
+    if TG_OP = 'INSERT' then
+        -- copy permissions from master
+        update  pg_class
+        set     relacl = ( select relacl from pg_class where oid = new.master_class )
+        where   oid = new.partition_class;
+    end if;
+    -- after trigger, no need to return anything special
+    return null;
+end
+$$;
+
+comment on function partition_copy_acl()
+is E'This is security definer because it updates pg_class directly';
+
+create function partition_reflect() returns trigger
+language plpgsql set search_path from current as $$
     if TG_OP = 'UPDATE' then
         if new.master_class <> old.master_class then
             raise exception '%', 'Cannot modify master_class';
@@ -333,21 +336,25 @@ begin
                         new.partition_class::regclass::text,
                         new.master_class::regclass::text);
         perform create_exclusion_constraint(new.partition_class);
-
-        -- copy permissions from master
-        update  pg_class
-        set     relacl = ( select relacl from pg_class where oid = new.master_class )
-        where   oid = new.partition_class;
     end if;
 
-    return new;
+    -- update the insert trigger to reflect the new partition table
+    execute format(E'create or replace function %s() returns trigger language plpgsql as $BODY$\n'
+                    'begin\n%sreturn null;\nend;$BODY$',
+                    ( select insert_trigger_function from master where master_class = new.master_class ),
+                    trigger_iter(new.master_class));
+
+    -- after trigger, no need to return anything
+    return null;
 end
 $$;
+
 
 comment on function partition_reflect() 
 is E'Reflect whatever changes were made to the partition table in the actual metadata(constraints, inheritance) of the table.';
 
 create trigger partition_reflect after insert or update on partition for each row execute procedure partition_reflect();
+create trigger partition_copy_acl after insert on partition for each row execute procedure partition_copy_acl();
 
 comment on trigger partition_reflect on partition
 is E'Any changes made to the partition table should be reflected in the actual partition metadata';
@@ -564,8 +571,6 @@ begin
                     r.source_table,
                     r.partition_table);
 
-    perform create_trigger_function(l_master_oid);
-
     execute format('create trigger %s before insert on %s for each row execute procedure %s()',
                     r.insert_trigger_name,
                     p_qual_table_name,
@@ -646,8 +651,6 @@ begin
     update  partition
     set     range = l_range_difference
     where   partition_class = pr.partition_class;
-
-    perform create_trigger_function(mr.master_class);
 end;
 $$;
 
@@ -691,6 +694,9 @@ begin
                         p_adjacent_partition_name;
     end;
 
+    -- delete the doomed entry
+    delete from partition where partition_class = p_drop_partition_name::regclass;
+
     -- reflect the change in the partition table, this will update the constraint as well
     update  partition
     set     range = l_range_union
@@ -700,9 +706,6 @@ begin
     execute format('insert into %s select * from %s',
                     p_adjacent_partition_name::regclass::text,
                     p_drop_partition_name::regclass::text);
-
-    -- delete the entry
-    delete from partition where partition_class = p_drop_partition_name::regclass;
 
     -- drop doomed partition
     execute format('drop table %s',
@@ -738,6 +741,4 @@ begin
     end loop;
 end
 $$;
-
-
 
