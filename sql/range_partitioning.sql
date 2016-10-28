@@ -421,7 +421,6 @@ create function create_table_like(  p_qual_new_table text,
 language plpgsql set search_path from current as $$
 declare
     l_model_oid oid := p_qual_model_table::regclass;
-    l_new_table_oid oid;
     l_tablespace text;
 begin
     -- see if the model table has a non-default tablespace, if so, use that
@@ -434,17 +433,15 @@ begin
 
     if found then
         execute format('create table %s(like %s including all) tablespace %I',
-                        p_qual_new_table text,
+                        p_qual_new_table,
                         p_qual_model_table,
                         l_tablespace);
     else
         execute format('create table %s(like %s including all)',
-                        p_qual_new_table text,
+                        p_qual_new_table,
                         p_qual_model_table);
     end if;
 
-    execute format('%L::regclass',p_qual_new_table)
-    into l_new_table_oid;
 
     -- set ownership
     execute format('alter table %s set owner to %I',
