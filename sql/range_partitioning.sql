@@ -306,6 +306,22 @@ begin
         update  pg_class
         set     relacl = ( select relacl from pg_class where oid = new.master_class )
         where   oid = new.partition_class;
+
+        -- set ownership
+        execute format('alter table %I.%I set owner to %I',
+                        (   select  s.nspname
+                            from    pg_class c
+                            join    pg_namespace s
+                            on      s.oid = c.relnamespace
+                            where   c.oid = new.master_class ),
+                        (   select  c.relname
+                            from    pg_class c
+                            where   c.oid = new.master_class ),
+                        (   select  a.rolname
+                            from    pg_class c
+                            join    pg_authid a
+                            on      a.oid = c.relowner
+                            where   c.oid = l_model_oid ) );
     end if;
     -- after trigger, no need to return anything special
     return null;
@@ -313,7 +329,7 @@ end
 $$;
 
 comment on function partition_copy_acl()
-is E'This is security definer because it updates pg_class directly';
+is E'This is security definer because it references pg_authid and updates pg_class directly';
 
 create function partition_reflect() returns trigger
 language plpgsql set search_path from current as $$
@@ -441,17 +457,6 @@ begin
                         p_qual_new_table,
                         p_qual_model_table);
     end if;
-
-
-    -- set ownership
-    execute format('alter table %s set owner to %I',
-                        p_qual_new_table,
-                    (   select  a.rolname
-                        from    pg_class c
-                        join    pg_authid a
-                        on      a.oid = c.relowner
-                        where   c.oid = l_model_oid ) );
-
 end;
 $$;
 
