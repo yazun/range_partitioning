@@ -355,16 +355,23 @@ begin
         perform create_exclusion_constraint(new.partition_class);
     end if;
 
-    -- update the insert trigger to reflect the new partition table
-    execute format(E'create or replace function %s() returns trigger language plpgsql as $BODY$\n'
-                    'begin\n%sreturn null;\nend;$BODY$',
-                    ( select insert_trigger_function from master where master_class = new.master_class ),
-                    trigger_iter(new.master_class));
-
     -- after trigger, no need to return anything
     return null;
 end
 $$;
+
+create or replace function create_trigger_function(p_master_class oid) returns void
+language plpgsql as $$
+begin
+    execute format(E'create or replace function %s() returns trigger language plpgsql as $BODY$\n'
+                    'begin\n%sreturn null;\nend;$BODY$',
+                    ( select insert_trigger_function from master where master_class = p_master_class ),
+                    trigger_iter(p_master_class));
+end;
+$$;
+
+comment on function create_trigger_function(oid)
+is E'(re)create a trigger function for the given table. This is run as a part of adding/removing partitions.';
 
 
 comment on function partition_reflect() 
@@ -574,10 +581,13 @@ begin
                     r.source_table,
                     r.partition_table);
 
+    perform create_trigger_function(l_master_oid);
+
     execute format('create trigger %s before insert on %s for each row execute procedure %s()',
                     r.insert_trigger_name,
                     p_qual_table_name,
                     r.insert_trigger_function);
+
 end;
 $$;
 
@@ -654,6 +664,8 @@ begin
     update  partition
     set     range = l_range_difference
     where   partition_class = pr.partition_class;
+
+    perform create_trigger_function(mr.master_class);
 end;
 $$;
 
@@ -674,6 +686,7 @@ begin
             m.range_type,
             a.range as drop_range,
             b.range as keep_range,
+            m.master_class as master_class_oid,
             m.master_class::regclass::text as qual_master_table_name
     into strict r
     from    partition a
@@ -713,6 +726,8 @@ begin
     -- drop doomed partition
     execute format('drop table %s',
                     p_drop_partition_name::regclass::text);
+
+    perform create_trigger_function(r.master_class_oid);
 end;
 $$;
 
