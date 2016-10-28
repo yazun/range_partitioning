@@ -317,6 +317,7 @@ is E'This is security definer because it updates pg_class directly';
 
 create function partition_reflect() returns trigger
 language plpgsql set search_path from current as $$
+begin
     if TG_OP = 'UPDATE' then
         if new.master_class <> old.master_class then
             raise exception '%', 'Cannot modify master_class';
