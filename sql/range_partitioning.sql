@@ -2,7 +2,7 @@ create table master (
     master_class oid not null primary key,
     partition_attribute text not null,
     range_type oid not null,
-    insert_trigger_function text not null
+    insert_trigger_function text not null unique
 );
 
 -- configure this table to not be ignored by pg_dump
@@ -133,19 +133,6 @@ $$;
 comment on function range_subtract(p_range_x text, p_range_y text, p_range_type text)
 is 'subtract range y from range x together and return the text representation of the result';
 
-
-create or replace function create_trigger_function(p_master_class oid) returns void
-language plpgsql as $$
-begin
-    execute format(E'create or replace function %s() returns trigger language plpgsql as $BODY$\n'
-                    'begin\n%sreturn null;\nend;$BODY$',
-                    ( select insert_trigger_function from master where master_class = p_master_class ),
-                    trigger_iter(p_master_class));
-end;
-$$;
-
-comment on function create_trigger_function(oid)
-is E'(re)create a trigger function for the given table. This is run as a part of adding/removing partitions.';
 
 create function get_collation(p_master_class oid) returns text
 language sql as $$
@@ -311,8 +298,41 @@ $$;
 comment on function refresh_exclusion_constraint(p_partition_class oid)
 is 'drop and recreate exclusion constraints';
 
+create function partition_copy_acl() returns trigger
+language plpgsql security definer set search_path from current as $$
+begin
+    if TG_OP = 'INSERT' then
+        -- copy permissions from master
+        update  pg_class
+        set     relacl = ( select relacl from pg_class where oid = new.master_class )
+        where   oid = new.partition_class;
+
+        -- set ownership
+        execute format('alter table %I.%I owner to %I',
+                        (   select  s.nspname
+                            from    pg_class c
+                            join    pg_namespace s
+                            on      s.oid = c.relnamespace
+                            where   c.oid = new.master_class ),
+                        (   select  c.relname
+                            from    pg_class c
+                            where   c.oid = new.master_class ),
+                        (   select  a.rolname
+                            from    pg_class c
+                            join    pg_authid a
+                            on      a.oid = c.relowner
+                            where   c.oid = new.master_class ) );
+    end if;
+    -- after trigger, no need to return anything special
+    return null;
+end
+$$;
+
+comment on function partition_copy_acl()
+is E'This is security definer because it references pg_authid and updates pg_class directly';
+
 create function partition_reflect() returns trigger
-language plpgsql as $$
+language plpgsql set search_path from current as $$
 begin
     if TG_OP = 'UPDATE' then
         if new.master_class <> old.master_class then
@@ -335,14 +355,30 @@ begin
         perform create_exclusion_constraint(new.partition_class);
     end if;
 
-    return new;
+    -- after trigger, no need to return anything
+    return null;
 end
 $$;
+
+create or replace function create_trigger_function(p_master_class oid) returns void
+language plpgsql as $$
+begin
+    execute format(E'create or replace function %s() returns trigger language plpgsql as $BODY$\n'
+                    'begin\n%sreturn null;\nend;$BODY$',
+                    ( select insert_trigger_function from master where master_class = p_master_class ),
+                    trigger_iter(p_master_class));
+end;
+$$;
+
+comment on function create_trigger_function(oid)
+is E'(re)create a trigger function for the given table. This is run as a part of adding/removing partitions.';
+
 
 comment on function partition_reflect() 
 is E'Reflect whatever changes were made to the partition table in the actual metadata(constraints, inheritance) of the table.';
 
 create trigger partition_reflect after insert or update on partition for each row execute procedure partition_reflect();
+create trigger partition_copy_acl after insert on partition for each row execute procedure partition_copy_acl();
 
 comment on trigger partition_reflect on partition
 is E'Any changes made to the partition table should be reflected in the actual partition metadata';
@@ -402,6 +438,40 @@ comment on function trigger_iter(oid, text, integer)
 is E'recursive function to do a binary traversal of the partitions in a table,\n'
     'generating IF/THEN tests to find the right partition.';
 
+
+create function create_table_like(  p_qual_new_table text,
+                                    p_qual_model_table text ) returns void
+language plpgsql set search_path from current as $$
+declare
+    l_model_oid oid := p_qual_model_table::regclass;
+    l_tablespace text;
+begin
+    -- see if the model table has a non-default tablespace, if so, use that
+    select  t.spcname
+    into    l_tablespace
+    from    pg_class c
+    join    pg_tablespace t
+    on      t.oid = c.reltablespace
+    where c.oid = l_model_oid;
+
+    if found then
+        execute format('create table %s(like %s including all) tablespace %I',
+                        p_qual_new_table,
+                        p_qual_model_table,
+                        l_tablespace);
+    else
+        execute format('create table %s(like %s including all)',
+                        p_qual_new_table,
+                        p_qual_model_table);
+    end if;
+end;
+$$;
+
+comment on function create_table_like(  p_qual_new_table text,
+                                        p_qual_model_table text )
+is E'Create a table like the model table, with same indexes, tablespaces, ownership, permissions';
+
+
 create function create_parent(  p_qual_table_name text,
                                 p_range_column_name text,
                                 p_dest_schema text default null,
@@ -418,9 +488,9 @@ begin
         l_master_oid := p_qual_table_name::regclass;
     exception
         when invalid_schema_name then
-            raise exception '%s is an unknown schema', p_qual_table_name;
+            raise exception '% is an unknown schema', p_qual_table_name;
         when undefined_table then
-            raise exception '%s is an unknown table', p_qual_table_name;
+            raise exception '% is an unknown table', p_qual_table_name;
         when others then raise;
     end;
 
@@ -437,9 +507,9 @@ begin
             l_range_type_oid := p_qual_range_type::regtype;
         exception
             when invalid_schema_name then
-                raise exception '%s is an unknown schema', p_qual_range_type;
+                raise exception '% is an unknown schema', p_qual_range_type;
             when undefined_object then
-                raise exception '%s is an unknown type', p_qual_range_type;
+                raise exception '% is an unknown type', p_qual_range_type;
             when others then raise;
         end;
         if not exists ( select  null
@@ -496,14 +566,7 @@ begin
     where   c.oid = l_master_oid;
 
     -- create the table that will inherit from the master table
-    execute format('create table %s(like %s including indexes)',
-                    r.partition_table,
-                    r.source_table);
-
-    -- copy permissions from master
-    update  pg_class
-    set     relacl = (  select relacl from pg_class where oid = l_master_oid )
-    where   oid = r.partition_table::regclass;
+    perform create_table_like(r.partition_table,r.source_table);
 
     -- create the record and set the name of the trigger function so that it can be created
     insert into master 
@@ -524,6 +587,7 @@ begin
                     r.insert_trigger_name,
                     p_qual_table_name,
                     r.insert_trigger_function);
+
 end;
 $$;
 
@@ -582,14 +646,7 @@ begin
                                     where c.oid = mr.master_class ));
 
     -- create the table that will inherit from the master table
-    execute format('create table %s(like %s including indexes)',
-                    l_new_partition,
-                    mr.master_class::regclass::text);
-
-    -- copy permissions from master
-    update  pg_class
-    set     relacl = (  select relacl from pg_class where oid = mr.master_class )
-    where   oid = l_new_partition::regclass;
+    perform create_table_like(l_new_partition, mr.master_class::regclass::text);
 
     -- inserting into partition will automatically add the check constraint on the table and complete the inherance
     insert into partition(partition_class,master_class,partition_number,range)
@@ -629,6 +686,7 @@ begin
             m.range_type,
             a.range as drop_range,
             b.range as keep_range,
+            m.master_class as master_class_oid,
             m.master_class::regclass::text as qual_master_table_name
     into strict r
     from    partition a
@@ -652,6 +710,9 @@ begin
                         p_adjacent_partition_name;
     end;
 
+    -- delete the doomed entry
+    delete from partition where partition_class = p_drop_partition_name::regclass;
+
     -- reflect the change in the partition table, this will update the constraint as well
     update  partition
     set     range = l_range_union
@@ -662,17 +723,42 @@ begin
                     p_adjacent_partition_name::regclass::text,
                     p_drop_partition_name::regclass::text);
 
-    -- delete the entry
-    delete from partition where partition_class = p_drop_partition_name::regclass;
-
     -- drop doomed partition
     execute format('drop table %s',
                     p_drop_partition_name::regclass::text);
+
+    perform create_trigger_function(r.master_class_oid);
 end;
 $$;
 
 comment on function drop_partition (text, text)
 is E'merge two adjacent partitions into one single partition';
+
+create function drop_parent( p_qual_table_name text ) returns void
+language plpgsql set search_path from current as $$
+declare
+    r record;
+begin
+    select  m.*,
+            format('%I',c.relname || '_ins_trig') as insert_trigger_name
+    into    r
+    from    master m
+    join    pg_class c
+    on      c.oid = m.master_class
+    where   m.master_class = p_qual_table_name::regclass;
+
+    delete from partition where master_class = r.master_class;
+
+    execute format('drop function if exists %s()', r.insert_trigger_function);
+
+    execute format('drop trigger if exists %s on %s', r.insert_trigger_name, p_qual_table_name );
+
+    delete from master where master_class = r.master_class;
+end;
+$$;
+
+comment on function drop_parent( p_qual_table_name text )
+is E'Stop management of the table as a range-partitioned table. Leave existing tables as-is';
 
 do $$
 begin
@@ -699,6 +785,4 @@ begin
     end loop;
 end
 $$;
-
-
 
