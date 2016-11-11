@@ -739,17 +739,24 @@ language plpgsql set search_path from current as $$
 declare
     r record;
 begin
-    select  m.*
+    select  m.*,
+            format('%I',c.relname || '_ins_trig') as insert_trigger_name
     into    r
     from    master m
+    join    pg_class c
+    on      c.oid = m.master_class
     where   m.master_class = p_qual_table_name::regclass;
 
     delete from partition where master_class = r.master_class;
-    execute format('drop function if exists %s() cascade', r.insert_trigger_function);
+
+    execute format('drop trigger if exists %s on %s', r.insert_trigger_name, p_qual_table_name );
+
+    execute format('drop function if exists %s()', r.insert_trigger_function);
 
     delete from master where master_class = r.master_class;
 end;
 $$;
+
 
 comment on function drop_parent( p_qual_table_name text )
 is E'Stop management of the table as a range-partitioned table. Leave existing tables as-is';

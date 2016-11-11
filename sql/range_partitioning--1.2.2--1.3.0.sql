@@ -243,9 +243,9 @@ begin
 
     delete from partition where master_class = r.master_class;
 
-    execute format('drop function if exists %s()', r.insert_trigger_function);
-
     execute format('drop trigger if exists %s on %s', r.insert_trigger_name, p_qual_table_name );
+
+    execute format('drop function if exists %s()', r.insert_trigger_function);
 
     delete from master where master_class = r.master_class;
 end;
