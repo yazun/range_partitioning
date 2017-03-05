@@ -441,13 +441,20 @@ is E'recursive function to do a binary traversal of the partitions in a table,\n
 
 create function create_table_like(  p_qual_new_table text,
                                     p_qual_model_table text ) returns void
-language plpgsql set search_path from current as $$
+language plpgsql set search_path from current  as $$
 declare
     l_model_oid oid := p_qual_model_table::regclass;
     l_tablespace text;
+        sql_cmd text;
+        p_distribution_att text;
 begin
-    -- see if the model table has a non-default tablespace, if so, use that
-    select  t.spcname
+     raise info '%', l_model_oid::text;
+     select (select attname from pg_attribute where attrelid = pcrelid and attnum = pcattnum)
+     into p_distribution_att
+     from pgxc_class where pcrelid = l_model_oid;
+     raise info '%', p_distribution_att;
+ -- see if the model table has a non-default tablespace, if so, use that
+select  t.spcname
     into    l_tablespace
     from    pg_class c
     join    pg_tablespace t
@@ -455,15 +462,24 @@ begin
     where c.oid = l_model_oid;
 
     if found then
-        execute format('create table %s(like %s including all) tablespace %I',
+        sql_cmd := format('create table %s(like %s including indexes including storage including defaults including comments) distribute by hash(%s) tablespace %I',
                         p_qual_new_table,
                         p_qual_model_table,
-                        l_tablespace);
+                        p_distribution_att,
+                        l_tablespace
+                    );
+        execute sql_cmd;
     else
-        execute format('create table %s(like %s including all)',
+        sql_cmd := format('create table %s(like %s including indexes including storage including defaults including comments) distribute by hash(%s)',
                         p_qual_new_table,
-                        p_qual_model_table);
+                        p_qual_model_table,
+                        p_distribution_att
+                    );
+        execute sql_cmd;
+
     end if;
+
+
 end;
 $$;
 
