@@ -499,16 +499,16 @@ declare
     l_range_type_oid oid;
     l_attribute_oid oid;
 begin
-    -- validate table
-    begin
+     -- validate table
+    --begin
         l_master_oid := p_qual_table_name::regclass;
-    exception
-        when invalid_schema_name then
-            raise exception '% is an unknown schema', p_qual_table_name;
-        when undefined_table then
-            raise exception '% is an unknown table', p_qual_table_name;
-        when others then raise;
-    end;
+    --exception
+    --    when invalid_schema_name then
+    --        raise exception '% is an unknown schema', p_qual_table_name;
+    --    when undefined_table then
+     --       raise exception '% is an unknown table', p_qual_table_name;
+     --   when others then raise;
+    --end;
 
     -- validate partitioning column
     if not exists(  select  null
@@ -519,15 +519,15 @@ begin
     end if;
 
     if p_qual_range_type is not null then
-        begin
+        --begin
             l_range_type_oid := p_qual_range_type::regtype;
-        exception
-            when invalid_schema_name then
-                raise exception '% is an unknown schema', p_qual_range_type;
-            when undefined_object then
-                raise exception '% is an unknown type', p_qual_range_type;
-            when others then raise;
-        end;
+        --exception
+        --    when invalid_schema_name then
+         --       raise exception '% is an unknown schema', p_qual_range_type;
+         --   when undefined_object then
+         --       raise exception '% is an unknown type', p_qual_range_type;
+         --   when others then raise;
+        -- end;
         if not exists ( select  null
                         from    pg_attribute a
                         join    pg_range rt
@@ -542,7 +542,7 @@ begin
                             p_qual_table_name;
         end if;
     else
-        begin
+        --begin
             select  rt.rngtypid
             into    strict l_range_type_oid
             from    pg_attribute a
@@ -551,23 +551,23 @@ begin
             and     rt.rngcollation = a.attcollation
             where   a.attrelid = l_master_oid
             and     a.attname = p_range_column_name;
-        exception
-            when no_data_found then
-                raise exception 'No suitable range type for % on %', p_range_column_name, p_qual_table_name;
-            when too_many_rows then
-                raise exception 'Multiple range types (%) are valid for column % on %',
-                                (   select  string_agg(rt.rngtypid::regtype::text, ', ')
-                                    from    pg_attribute a
-                                    join    pg_range rt
-                                    on      rt.rngsubtype = a.atttypid
-                                    and     rt.rngcollation = a.attcollation
-                                    where   a.attrelid = l_master_oid
-                                    and     a.attname = p_range_column_name ),
-                                p_range_column_name,
-                                p_qual_table_name
-                    using hint = 'Specify one of those types in the p_qual_range_type parameter';
-            when others then raise;
-        end;
+        --exception
+        --    when no_data_found then
+        --        raise exception 'No suitable range type for % on %', p_range_column_name, p_qual_table_name;
+        --    when too_many_rows then
+        --        raise exception 'Multiple range types (%) are valid for column % on %',
+        --                        (   select  string_agg(rt.rngtypid::regtype::text, ', ')
+        --                            from    pg_attribute a
+        --                            join    pg_range rt
+        --                            on      rt.rngsubtype = a.atttypid
+        --                            and     rt.rngcollation = a.attcollation
+        --                            where   a.attrelid = l_master_oid
+        --                            and     a.attname = p_range_column_name ),
+        --                        p_range_column_name,
+        --                        p_qual_table_name
+        --            using hint = 'Specify one of those types in the p_qual_range_type parameter';
+        --    when others then raise;
+        --end;
     end if;
 
     -- find the range type for the partitioning column, must find exactly one, fail otherwise
@@ -593,9 +593,9 @@ begin
     values (r.partition_table::regclass, l_master_oid, 0, '(,)');
 
     -- migrate rows to main partition
-    execute format('with d as (delete from %s returning *) insert into %s select * from d',
-                    r.source_table,
-                    r.partition_table);
+    --execute format('with d as (delete from %s returning *) insert into %s select * from d',
+    --                r.source_table,
+    --                r.partition_table);
 
     perform create_trigger_function(l_master_oid);
 
@@ -620,7 +620,7 @@ declare
     l_new_partition_number integer;
     l_range_difference text;
 begin
-    -- verify that we actually have a partitioned table
+     -- verify that we actually have a partitioned table
     select  *
     into strict mr
     from    master
@@ -632,7 +632,7 @@ begin
     from    partition
     where   master_class = mr.master_class;
 
-    begin
+    --begin
         -- verify new range is entirely within an existing range, and matches one edge of that range
         select  partition_class,
                 range_subtract(range,p_new_partition_range,mr.range_type::regtype::text)
@@ -640,11 +640,11 @@ begin
         from    partition
         where   master_class = mr.master_class
         and     is_subrange(p_new_partition_range,range,mr.range_type::regtype::text);
-    exception
-        when no_data_found or data_exception then
-            raise exception 'New range {%} must match have one boundary in common with an existing partition',
-                            p_new_partition_range;
-    end;
+    --exception
+    --    when no_data_found or data_exception then
+    --        raise exception 'New range {%} must match have one boundary in common with an existing partition',
+    --                        p_new_partition_range;
+    --end;
 
     if l_range_difference = 'empty' then
         raise notice 'New partition {%} exactly matches an existing partition {%}, skipping',
@@ -669,12 +669,12 @@ begin
     values (l_new_partition::regclass, mr.master_class, l_new_partition_number, p_new_partition_range);
 
     -- migrate rows to main partition
-    execute format('with d as (delete from %s where %I <@ %L::%s returning *) insert into %s select * from d',
-                    pr.partition_class::regclass::text,
-                    mr.partition_attribute,
-                    p_new_partition_range,
-                    mr.range_type::regtype::text,
-                    l_new_partition);
+--    execute format('with d as (delete from %s where %I <@ %L::%s returning *) insert into %s select * from d',
+--                    pr.partition_class::regclass::text,
+--                    mr.partition_attribute,
+--                    p_new_partition_range,
+--                    mr.range_type::regtype::text,
+--                    l_new_partition);
 
     -- updating this table will drop the old constraint and create a new one
     update  partition
